@@ -110,18 +110,18 @@ function Home() {
           {ranked.map((table) => {
             const math = potMath(table);
             const short = signedIn && lobby ? Math.max(0, table.stake - lobby.profile.auric) : 0;
-            let label = `Sit \u00b7 ${table.stake.toLocaleString()}`;
+            let label = `Sit · ${table.stake.toLocaleString()}`;
             if (!signedIn) label = "Sign in to sit";
             else if (lobby?.activeMatchId) label = "Finish the open duel";
             else if (short > 0) label = `Short ${short.toLocaleString()}`;
-            else if (busy === table.id) label = "Dealing\u2026";
+            else if (busy === table.id) label = "Dealing…";
             return (
               <article key={table.id} className="flex flex-col rounded-2xl border border-border bg-surface p-4">
                 <p className="text-xs tracking-widest text-copper uppercase">{table.name}</p>
                 <p className="mt-2 font-display text-3xl tabular-nums">{table.stake.toLocaleString()}</p>
                 <p className="mt-1 text-sm text-muted">{table.blurb}</p>
                 <p className="mt-3 text-sm text-fg">
-                  Prize {math.prize.toLocaleString()} \u00b7 net {math.net > 0 ? "+" : ""}
+                  Prize {math.prize.toLocaleString()} · net {math.net > 0 ? "+" : ""}
                   {math.net.toLocaleString()} if you win
                 </p>
                 <button
