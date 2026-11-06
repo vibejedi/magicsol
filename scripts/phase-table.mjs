@@ -193,6 +193,13 @@ export const LADDER_SCRIPT = String.raw`
   const LOGO = "/__ladder/logo.png";
 
   function paint() {
+    if (!document.getElementById("mc-font")) {
+      const link = document.createElement("link");
+      link.id = "mc-font";
+      link.rel = "stylesheet";
+      link.href = "https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&display=swap";
+      document.head.appendChild(link);
+    }
     if (document.getElementById("mc-theme")) return;
     const style = document.createElement("style");
     style.id = "mc-theme";
@@ -204,6 +211,7 @@ export const LADDER_SCRIPT = String.raw`
       "--color-rose:#ff4ad8;",
       "--color-hairline:rgba(45,226,255,.22);--color-hairline-hover:rgba(255,43,214,.5);--color-hairline-strong:rgba(61,255,154,.18);",
       "}",
+      ".mc-wordmark{font-family:Cinzel,Palatino,'Palatino Linotype',serif !important;font-weight:900;letter-spacing:.14em;text-transform:uppercase;}",
       "nav[aria-label='Primary navigation']{",
       "background:linear-gradient(180deg,rgba(8,10,22,.96),rgba(8,4,18,.94)) padding-box,linear-gradient(180deg,#3dff9a,#2de2ff 42%,#7a3dff 72%,#ff2bd6) border-box !important;",
       "border-right:1px solid transparent !important;",
@@ -272,7 +280,7 @@ export const LADDER_SCRIPT = String.raw`
       lockup.style.cssText = "display:flex;flex-direction:column;align-items:flex-start;gap:10px;";
       const name = document.createElement("span");
       name.textContent = "Magic Cards";
-      name.style.cssText = "font-weight:700;letter-spacing:.03em;font-size:32px;line-height:1;font-family:ui-sans-serif,system-ui,sans-serif;background:linear-gradient(90deg,#3dff9a,#2de2ff 38%,#7a3dff 70%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(45,226,255,.28));";
+      name.style.cssText = "font-weight:900;letter-spacing:.16em;font-size:28px;line-height:1;text-transform:uppercase;font-family:Cinzel,Palatino,'Palatino Linotype',serif;background:linear-gradient(90deg,#3dff9a,#2de2ff 38%,#7a3dff 70%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(45,226,255,.28));";
       lockup.append(logoImg(true), name);
       img.replaceWith(lockup);
     });
@@ -283,7 +291,7 @@ export const LADDER_SCRIPT = String.raw`
       lockup.style.cssText = "display:flex;flex-direction:column;align-items:flex-start;gap:10px;";
       const name = document.createElement("span");
       name.textContent = "Magic Cards";
-      name.style.cssText = "font-weight:700;letter-spacing:.03em;font-size:32px;line-height:1;font-family:ui-sans-serif,system-ui,sans-serif;background:linear-gradient(90deg,#3dff9a,#2de2ff 38%,#7a3dff 70%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(45,226,255,.28));";
+      name.style.cssText = "font-weight:900;letter-spacing:.16em;font-size:28px;line-height:1;text-transform:uppercase;font-family:Cinzel,Palatino,'Palatino Linotype',serif;background:linear-gradient(90deg,#3dff9a,#2de2ff 38%,#7a3dff 70%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(45,226,255,.28));";
       lockup.append(logoImg(true), name);
       span.replaceWith(lockup);
     });
