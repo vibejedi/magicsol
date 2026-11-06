@@ -4,6 +4,7 @@
  * The engine wasm and card data stay on phase's CDN; this origin proxies the
  * matching web client and records VICTORY / DEFEAT / DRAW.
  */
+import { LOGO_DATA_URL } from "./logo-data.mjs";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { injectGrokPwaHead } from "./grok-pwa-shared.mjs";
@@ -192,7 +193,7 @@ export const LADDER_SCRIPT = String.raw`
     }
   }
 
-  const LOGO = "/__ladder/logo.png";
+  const LOGO = "__MC_LOGO__";
 
   function paint() {
     if (!document.getElementById("mc-font")) {
@@ -317,7 +318,7 @@ export const LADDER_SCRIPT = String.raw`
   brand();
   refresh().catch(() => render({ players: [] }));
 })();
-`;
+`.replace("__MC_LOGO__", LOGO_DATA_URL);
 
 function stripChallenges(html) {
   return html
