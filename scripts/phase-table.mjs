@@ -5,6 +5,7 @@
  * matching web client and records VICTORY / DEFEAT / DRAW.
  */
 import { LOGO_DATA_URL } from "./logo-data.mjs";
+import { FX_DATA_URL } from "./fx-data.mjs";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { injectGrokPwaHead } from "./grok-pwa-shared.mjs";
@@ -239,9 +240,69 @@ export const LADDER_SCRIPT = String.raw`
     img.alt = "Magic Cards";
     img.dataset.mc = "logo";
     img.style.cssText = big
-      ? "display:block;width:min(168px,42vw);height:auto;object-fit:contain;filter:drop-shadow(0 0 16px rgba(45,226,255,.45)) drop-shadow(0 0 26px rgba(255,43,214,.35));"
+      ? "position:relative;z-index:1;display:block;width:46%;height:auto;object-fit:contain;filter:drop-shadow(0 0 16px rgba(45,226,255,.45)) drop-shadow(0 0 26px rgba(255,43,214,.35));"
       : "width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 8px rgba(45,226,255,.55));";
     return img;
+  }
+
+  function centerHero(node) {
+    let n = node && node.parentElement;
+    for (let i = 0; i < 4 && n && !(n.classList && n.classList.contains("menu-scene")); i++) {
+      n.style.alignItems = "center";
+      n.style.textAlign = "center";
+      n = n.parentElement;
+    }
+  }
+
+  function heroLockup() {
+    const lockup = document.createElement("span");
+    lockup.dataset.mc = "lockup";
+    lockup.style.cssText = "display:flex;flex-direction:column;align-items:center;width:100%;gap:8px;text-align:center;";
+    const stage = document.createElement("span");
+    stage.style.cssText = "position:relative;display:grid;place-items:center;width:min(320px,78vw);height:min(300px,72vw);overflow:hidden;";
+    const video = document.createElement("video");
+    video.src = "__MC_FX__";
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("muted", "");
+    video.style.cssText = "position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none;";
+    const canvas = document.createElement("canvas");
+    canvas.width = 560;
+    canvas.height = 560;
+    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const paintFrame = () => {
+      if (video.readyState >= 2 && ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = frame.data;
+        for (let i = 0; i < d.length; i += 4) {
+          const m = d[i] > d[i + 1] ? (d[i] > d[i + 2] ? d[i] : d[i + 2]) : (d[i + 1] > d[i + 2] ? d[i + 1] : d[i + 2]);
+          if (m < 8) {
+            d[i + 3] = 0;
+            continue;
+          }
+          d[i] = Math.min(255, (d[i] * 5) >> 1);
+          d[i + 1] = Math.min(255, (d[i + 1] * 5) >> 1);
+          d[i + 2] = Math.min(255, (d[i + 2] * 5) >> 1);
+          d[i + 3] = Math.min(255, (m - 8) * 8);
+        }
+        ctx.putImageData(frame, 0, 0);
+      }
+      requestAnimationFrame(paintFrame);
+    };
+    video.addEventListener("playing", () => requestAnimationFrame(paintFrame), { once: true });
+    video.play().catch(() => {});
+    const name = document.createElement("span");
+    name.textContent = "Magic Cards";
+    name.style.cssText = "position:relative;z-index:1;font-weight:900;letter-spacing:.16em;font-size:28px;line-height:1;text-transform:uppercase;font-family:Cinzel,Palatino,'Palatino Linotype',serif;background:linear-gradient(90deg,#3dff9a,#2de2ff 38%,#7a3dff 70%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(45,226,255,.28));";
+    stage.append(video, canvas, logoImg(true));
+    lockup.append(stage, name);
+    return lockup;
   }
 
   function brand() {
@@ -278,25 +339,15 @@ export const LADDER_SCRIPT = String.raw`
         img.replaceWith(logoImg(false));
         return;
       }
-      const lockup = document.createElement("span");
-      lockup.dataset.mc = "lockup";
-      lockup.style.cssText = "display:flex;flex-direction:column;align-items:flex-start;gap:10px;";
-      const name = document.createElement("span");
-      name.textContent = "Magic Cards";
-      name.style.cssText = "font-weight:900;letter-spacing:.16em;font-size:28px;line-height:1;text-transform:uppercase;font-family:Cinzel,Palatino,'Palatino Linotype',serif;background:linear-gradient(90deg,#3dff9a,#2de2ff 38%,#7a3dff 70%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(45,226,255,.28));";
-      lockup.append(logoImg(true), name);
+      const lockup = heroLockup();
       img.replaceWith(lockup);
+      centerHero(lockup);
     });
     document.querySelectorAll("span[data-mc='1']").forEach((span) => {
       if ((span.textContent || "").trim() !== "Magic Cards") return;
-      const lockup = document.createElement("span");
-      lockup.dataset.mc = "lockup";
-      lockup.style.cssText = "display:flex;flex-direction:column;align-items:flex-start;gap:10px;";
-      const name = document.createElement("span");
-      name.textContent = "Magic Cards";
-      name.style.cssText = "font-weight:900;letter-spacing:.16em;font-size:28px;line-height:1;text-transform:uppercase;font-family:Cinzel,Palatino,'Palatino Linotype',serif;background:linear-gradient(90deg,#3dff9a,#2de2ff 38%,#7a3dff 70%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(45,226,255,.28));";
-      lockup.append(logoImg(true), name);
+      const lockup = heroLockup();
       span.replaceWith(lockup);
+      centerHero(lockup);
     });
   }
 
@@ -318,7 +369,7 @@ export const LADDER_SCRIPT = String.raw`
   brand();
   refresh().catch(() => render({ players: [] }));
 })();
-`.replace("__MC_LOGO__", LOGO_DATA_URL);
+`.replace("__MC_LOGO__", LOGO_DATA_URL).replace("__MC_FX__", FX_DATA_URL);
 
 function stripChallenges(html) {
   return html
@@ -390,6 +441,21 @@ export async function proxyPhase(url, host) {
 }
 
 export function ladderResponse(method, pathname, rawBody) {
+  if (pathname === "/__ladder/fx.mp4" && (method === "GET" || method === "HEAD")) {
+    try {
+      const body = readFileSync(join(process.cwd(), "public/brand/fx.mp4"));
+      return {
+        status: 200,
+        headers: {
+          "content-type": "video/mp4",
+          "cache-control": "public, max-age=86400",
+        },
+        body,
+      };
+    } catch {
+      return { status: 404, headers: { "content-type": "text/plain" }, body: "fx missing" };
+    }
+  }
   if (pathname === "/__ladder/logo.png" && (method === "GET" || method === "HEAD")) {
     try {
       const body = readFileSync(join(process.cwd(), "public/brand/logo.png"));
