@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #07080c;
+  --color-surface: #12141c;
+  --color-surface-2: #1c2030;
+  --color-fg: #efe8dc;
+  --color-muted: #9a9286;
+  --color-copper: #e39a45;
+  --color-ion: #3ecf9a;
+  --color-danger: #e25b4a;
+  --color-border: #2c3140;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-sans: "Outfit", system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    overflow-x: hidden;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+  ::selection {
+    background: var(--color-copper);
+    color: var(--color-bg);
+  }
+}
+
+.felt {
+  background:
+    radial-gradient(90% 55% at 50% 0%, color-mix(in oklab, var(--color-copper) 16%, transparent), transparent 58%),
+    radial-gradient(70% 45% at 50% 100%, color-mix(in oklab, var(--color-ion) 8%, transparent), transparent 62%),
+    var(--color-bg);
+}
+
+.auth-chip > div > span:nth-of-type(2) {
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes auric-hit {
+  0%, 100% { transform: translateX(0); }
+  30% { transform: translateX(-3px); }
+  70% { transform: translateX(3px); }
+}
+
+.hit {
+  animation: auric-hit 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hit {
+    animation: none;
+  }
+}
