@@ -9,6 +9,8 @@ import { dirname, join } from "node:path";
 import { injectGrokPwaHead } from "./grok-pwa-shared.mjs";
 
 export const PHASE_UPSTREAM = "https://preview.phase-rs.dev";
+/** Where the table opens 1v1. Override with PHASE_LOBBY_URL. Must be a wss:// URL the browser can reach. */
+export const PHASE_LOBBY_URL = process.env.PHASE_LOBBY_URL || "wss://play.magiccards.io/ws";
 const LADDER_PATH = join(process.cwd(), "data", "phase-ladder.json");
 const AI_RATING = 1200;
 const K = 32;
@@ -355,6 +357,17 @@ function headerObject(headers) {
 }
 
 export async function proxyPhase(url, host) {
+  const pathOnly = url.split("?")[0];
+  if (pathOnly === "/config.js") {
+    return {
+      status: 200,
+      headers: {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "no-cache",
+      },
+      body: `window.__PHASE_CONFIG__ = ${JSON.stringify({ multiplayerServerUrl: PHASE_LOBBY_URL })};\n`,
+    };
+  }
   const upstream = new URL(url, PHASE_UPSTREAM);
   const response = await fetch(upstream, {
     redirect: "follow",

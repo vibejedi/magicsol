@@ -1,0 +1,5 @@
+# Drop this site into the Caddyfile already on the VPS, then: caddy reload
+# Do not point magiccards.io itself at this machine. That name belongs to Vercel.
+play.magiccards.io {
+	reverse_proxy 127.0.0.1:9374
+}
