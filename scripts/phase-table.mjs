@@ -754,6 +754,34 @@ export const LADDER_SCRIPT = String.raw`
       if (href.includes("github.com/phase-rs")) point(a, "https://x.com/lordkahl", "X", xIcon);
       else if (href.includes("discord.gg")) point(a, "https://pump.fun/coin/BWwZ6YWfhFKdfTvDHPX3gQck6WqFqDZesU3x41GAiutn", "Pump.fun", pumpIcon);
     });
+    if (document.getElementById("mc-ca")) return;
+    const anchor = document.querySelector('a[data-mc-link="Pump.fun"]') || document.querySelector('a[data-mc-link="X"]');
+    if (!anchor) return;
+    const wrap = document.createElement("span");
+    wrap.id = "mc-ca";
+    wrap.style.cssText = "display:inline-flex;align-items:center;gap:6px;margin-left:8px;vertical-align:middle;";
+    const contracts = [
+      ["$MAGIC", "47hdrCUp7XLsJDnYFDCMB687cqU48N3jiUjH7Gbapump"],
+      ["$CARDS", "CARDSccUMFKoPRZxt5vt3ksUbxEFEcnZ3H2pd3dKxYjp"],
+    ];
+    for (const [label, address] of contracts) {
+      const button = document.createElement("button");
+      const short = address.slice(0, 4) + "…" + address.slice(-4);
+      button.type = "button";
+      button.title = "Copy " + label + " contract address";
+      button.textContent = label + " " + short;
+      button.style.cssText = "cursor:pointer;border:1px solid rgba(45,226,255,.45);background:#070814;color:#e8fbff;border-radius:999px;padding:6px 10px;font:11px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;";
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const restore = () => { button.textContent = label + " " + short; };
+        const copied = () => { button.textContent = "Copied"; setTimeout(restore, 1200); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(address).then(copied).catch(copied);
+        else copied();
+      });
+      wrap.appendChild(button);
+    }
+    anchor.insertAdjacentElement("afterend", wrap);
   }
 
   function brand() {
@@ -842,7 +870,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=15"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=16"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
