@@ -27,7 +27,7 @@ export default async function phaseTableMiddleware(
       const req = event.req as { text?: () => Promise<string> };
       if (typeof req.text === "function") raw = await req.text();
     }
-    const out = ladderResponse(method, path, raw);
+    const out = await ladderResponse(method, path, raw);
     if (!out) return next();
     return new Response(typeof out.body === "string" ? out.body : out.body, {
       status: out.status,
