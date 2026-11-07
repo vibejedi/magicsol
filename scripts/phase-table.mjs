@@ -10,6 +10,7 @@ import { INTRO_DATA_URL } from "./intro-data.mjs";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { injectGrokPwaHead } from "./grok-pwa-shared.mjs";
+import { magicHolding, payCards } from "./cards-payout.mjs";
 
 export const PHASE_UPSTREAM = "https://preview.phase-rs.dev";
 /** Where the table opens 1v1. Override with PHASE_LOBBY_URL. Must be a wss:// URL the browser can reach. */
@@ -62,33 +63,6 @@ function saveBoard(board) {
       // One of the copies may be on a read-only disk. The other still counts.
     }
   }
-}
-
-function heliusRpcUrl() {
-  return String(process.env.HELIUS_RPC_URL || "").trim();
-}
-
-async function helius(method, params) {
-  const url = heliusRpcUrl();
-  if (!url) return null;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return data.result ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function confirmWallet(address) {
-  const result = await helius("getBalance", [address]);
-  if (!result || typeof result.value !== "number") return null;
-  return { sol: result.value / 1_000_000_000, slot: result.context && result.context.slot };
 }
 
 function playedOf(player) {
@@ -453,8 +427,28 @@ export const LADDER_SCRIPT = String.raw`
   }
   document.addEventListener("click", (event) => {
     const el = event.target && event.target.closest ? event.target.closest("a,button") : null;
-    if (el) rememberMode(el.innerText);
+    if (!el) return;
+    const label = el.innerText || "";
+    if (wantsToPlay(label)) {
+      const who = seat();
+      const access = window.__mcAccess;
+      if (!who || !access || access.allowed !== true) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!who) {
+          open = true;
+          panel.hidden = false;
+          flash("Sign in first. Hold 200,000 $MAGIC to play.");
+        } else showGate(access);
+        return;
+      }
+    }
+    rememberMode(label);
   }, true);
+  function wantsToPlay(text) {
+    const t = String(text || "").toLowerCase();
+    return t.includes("play vs ai") || t.includes("play online") || t.includes("vs ai") || t.includes("solo") || t.trim() === "draft" || t.startsWith("draft");
+  }
   function currentMode() {
     const path = location.pathname;
     if (path.startsWith("/draft")) return "draft";
@@ -474,7 +468,7 @@ export const LADDER_SCRIPT = String.raw`
     panel.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><strong style="letter-spacing:.14em;font-size:11px;text-transform:uppercase;color:#2de2ff">Leaderboard</strong><span style="color:#3dff9a;font-size:11px">$CARDS</span></div>' +
       '<p style="margin:8px 0 6px;color:#a8a29e">Sign in with a username and wallet. Consecutive wins pay $CARDS. A loss or a draw resets the streak.</p>' +
-      '<p style="margin:0 0 4px;color:#d6d3d1;font-size:12px">Play vs AI <b style="color:#efe8dc">5</b> · Draft <b style="color:#efe8dc">15</b> · Play Online <b style="color:#ff2bd6">40</b> per win, times the streak.</p>' +
+      '<p style="margin:0 0 4px;color:#d6d3d1;font-size:12px">Hold 200,000 $MAGIC to play. Wins pay $CARDS: AI <b style="color:#efe8dc">5</b> · Draft <b style="color:#efe8dc">15</b> · Online <b style="color:#ff2bd6">40</b>, times the streak.</p>' +
       account +
       '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="color:#78716c;font-size:11px;letter-spacing:.08em;text-transform:uppercase"><th></th><th style="text-align:left">Seat</th><th style="text-align:right">Streak</th><th style="text-align:right">$CARDS</th><th style="text-align:right">W-L-D</th></tr></thead><tbody>' + rows + '</tbody></table>' +
       payoutLines(data);
@@ -484,7 +478,7 @@ export const LADDER_SCRIPT = String.raw`
       signIn(form.querySelector("#mc-user").value, form.querySelector("#mc-wallet").value);
     });
     const logout = panel.querySelector("#mc-logout");
-    if (logout) logout.addEventListener("click", () => { setSeat(null); render(ledger()); });
+    if (logout) logout.addEventListener("click", () => { setSeat(null); window.__mcAccess = null; render(ledger()); });
     chip.textContent = "Leaderboard";
   }
 
@@ -500,8 +494,10 @@ export const LADDER_SCRIPT = String.raw`
       return;
     }
     setSeat(data.you);
+    window.__mcAccess = data.magic || null;
     render(remember(data));
-    flash("Signed in as " + data.you.name + ".");
+    if (!data.magic || data.magic.allowed !== true) showGate(data.magic || { amount: 0, required: 200000 });
+    else flash("Signed in as " + data.you.name + ".");
   }
 
   async function refresh() {
@@ -547,12 +543,41 @@ export const LADDER_SCRIPT = String.raw`
       '<div style="margin-top:8px;font-family:Cinzel,Palatino,serif;font-size:48px;font-weight:900;line-height:1;background:linear-gradient(90deg,#3dff9a,#2de2ff 45%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;">+' + data.awarded + '</div>' +
       '<div style="margin-top:4px;letter-spacing:.18em;color:#3dff9a">$CARDS</div>' +
       '<p style="margin:14px 0 0;color:#efe8dc">' + esc(modeLabel(data.mode)) + ' · streak ' + (who.streak || 0) + '</p>' +
-      '<p style="margin:6px 0 0;color:#a8a29e">Paid to ' + esc(who.name || "") + '<br>' + esc(shortWallet(who.wallet)) + '</p>' +
-      (data.chain ? '<p style="margin:8px 0 0;color:#78716c">Wallet confirmed on Solana · ' + Number(data.chain.sol).toFixed(4) + ' SOL</p>' : '<p style="margin:8px 0 0;color:#78716c">Balance ' + (who.cards || 0) + ' $CARDS</p>') +
+      '<p style="margin:6px 0 0;color:#a8a29e">To ' + esc(who.name || "") + '<br>' + esc(shortWallet(who.wallet)) + '</p>' +
+      (data.transfer && data.transfer.signature ? '<p style="margin:8px 0 0"><a href="https://solscan.io/tx/' + data.transfer.signature + '" target="_blank" rel="noreferrer" style="color:#2de2ff">$CARDS sent on Solana</a></p>' : '<p style="margin:8px 0 0;color:#f0abfc">' + esc((data.transfer && data.transfer.error) || ("Balance " + (who.cards || 0) + " $CARDS")) + '</p>') +
       '<button id="mc-collect" type="button" style="margin-top:16px;cursor:pointer;width:100%;border:0;border-radius:999px;padding:11px;background:#2de2ff;color:#070814;font-weight:800;letter-spacing:.14em">COLLECT</button>' +
       '</div>';
     document.body.appendChild(veil);
     veil.querySelector("#mc-collect").onclick = () => veil.remove();
+  }
+
+  function showGate(data) {
+    const old = document.getElementById("mc-gate");
+    if (old) old.remove();
+    const required = (data && data.required) || 200000;
+    const amount = data && typeof data.amount === "number" ? data.amount : 0;
+    const veil = document.createElement("div");
+    veil.id = "mc-gate";
+    veil.style.cssText = "position:fixed;inset:0;z-index:170;display:grid;place-items:center;background:rgba(0,0,0,.72);";
+    veil.innerHTML =
+      '<div style="width:min(420px,calc(100vw - 32px));background:#070814;border:1px solid rgba(255,43,214,.6);border-radius:18px;padding:22px 20px 16px;text-align:center;box-shadow:0 0 36px rgba(255,43,214,.22);">' +
+      '<div style="letter-spacing:.2em;font-size:11px;color:#ff2bd6">$MAGIC</div>' +
+      '<p style="margin:12px 0 0;color:#efe8dc;font-size:18px">Hold ' + Number(required).toLocaleString() + ' $MAGIC to play.</p>' +
+      '<p style="margin:8px 0 0;color:#a8a29e">This wallet has ' + Number(amount).toLocaleString() + '.</p>' +
+      (data && data.error ? '<p style="margin:8px 0 0;color:#f0abfc">' + esc(data.error) + '</p>' : '') +
+      '<a href="https://pump.fun/coin/47hdrCUp7XLsJDnYFDCMB687cqU48N3jiUjH7Gbapump" target="_blank" rel="noreferrer" style="display:inline-block;margin-top:14px;color:#2de2ff">Get $MAGIC</a>' +
+      '<button id="mc-gate-close" type="button" style="display:block;margin:14px auto 0;cursor:pointer;background:transparent;color:#a8a29e;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:8px 16px">Close</button>' +
+      '</div>';
+    document.body.appendChild(veil);
+    veil.querySelector("#mc-gate-close").onclick = () => veil.remove();
+  }
+  async function refreshAccess() {
+    const who = seat();
+    if (!who) return;
+    const res = await fetch("/__ladder/access?wallet=" + encodeURIComponent(who.wallet));
+    const data = await res.json();
+    window.__mcAccess = data;
+    if (!data || data.allowed !== true) showGate(data);
   }
 
   function flash(text) {
@@ -790,6 +815,7 @@ export const LADDER_SCRIPT = String.raw`
   obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   brand();
   refresh().catch(() => render({ players: [] }));
+  refreshAccess().catch(() => {});
 })();
 `.replace("__MC_LOGO__", LOGO_DATA_URL).replace("__MC_FX__", FX_DATA_URL).replace("__MC_INTRO__", INTRO_DATA_URL);
 
@@ -810,7 +836,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=13"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=14"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
@@ -874,7 +900,15 @@ self.addEventListener("activate",event=>{event.waitUntil((async()=>{const keys=a
   return { status: response.status, headers, body: buf };
 }
 
-export async function ladderResponse(method, pathname, rawBody) {
+function stampPayout(wallet, gamePath, signature) {
+  const board = loadBoard();
+  const row = (board.payouts || []).find((entry) => entry.wallet === wallet && entry.gamePath === gamePath);
+  if (!row) return;
+  row.signature = signature;
+  saveBoard(board);
+}
+
+export async function ladderResponse(method, pathname, rawBody, query = "") {
   if (pathname === "/__ladder/fx.mp4" && (method === "GET" || method === "HEAD")) {
     try {
       const body = readFileSync(join(process.cwd(), "public/brand/fx.mp4"));
@@ -937,8 +971,18 @@ export async function ladderResponse(method, pathname, rawBody) {
       payload = {};
     }
     const result = loginPlayer(payload);
+    if (result.ok) result.magic = await magicHolding(payload.wallet);
     return {
       status: result.ok ? 200 : 400,
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify(result),
+    };
+  }
+  if (pathname === "/__ladder/access" && method === "GET") {
+    const params = new URLSearchParams(String(query || "").replace(/^\?/, ""));
+    const result = await magicHolding(params.get("wallet"));
+    return {
+      status: 200,
       headers: { "content-type": "application/json; charset=utf-8" },
       body: JSON.stringify(result),
     };
@@ -957,10 +1001,19 @@ export async function ladderResponse(method, pathname, rawBody) {
     } catch {
       payload = {};
     }
+    const access = await magicHolding(payload.wallet);
+    if (!access.allowed) {
+      return {
+        status: 403,
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ ok: false, error: access.error || "Hold 200,000 $MAGIC to play.", magic: access }),
+      };
+    }
     const result = recordLadderResult(payload);
     if (result.ok && result.awarded > 0 && result.you && result.you.wallet) {
-      const chain = await confirmWallet(result.you.wallet);
-      if (chain) result.chain = chain;
+      const transfer = await payCards({ to: result.you.wallet, uiAmount: result.awarded });
+      result.transfer = transfer;
+      if (transfer.signature) stampPayout(result.you.wallet, payload.gamePath, transfer.signature);
     }
     return {
       status: result.ok ? 200 : 400,
