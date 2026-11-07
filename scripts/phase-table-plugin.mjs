@@ -25,7 +25,8 @@ export function phaseTablePlugin() {
           const method = (req.method || "GET").toUpperCase();
           if (pathname.startsWith("/__ladder")) {
             const body = method === "POST" ? await readBody(req) : "";
-            const out = await ladderResponse(method, pathname, body);
+            const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : "";
+            const out = await ladderResponse(method, pathname, body, query);
             if (!out) {
               next();
               return;
