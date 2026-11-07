@@ -22,7 +22,7 @@ const LADDER_PATHS = [
 let memoryBoard = null;
 
 function emptyBoard() {
-  return { players: {}, recent: [], signins: [] };
+  return { players: {}, recent: [], signins: [], payouts: [] };
 }
 
 function readBoardFile() {
@@ -32,6 +32,7 @@ function readBoardFile() {
       if (raw && typeof raw === "object" && raw.players && typeof raw.players === "object") {
         if (!Array.isArray(raw.recent)) raw.recent = [];
         if (!Array.isArray(raw.signins)) raw.signins = [];
+        if (!Array.isArray(raw.payouts)) raw.payouts = [];
         return raw;
       }
     } catch {
@@ -63,6 +64,33 @@ function saveBoard(board) {
   }
 }
 
+function heliusRpcUrl() {
+  return String(process.env.HELIUS_RPC_URL || "").trim();
+}
+
+async function helius(method, params) {
+  const url = heliusRpcUrl();
+  if (!url) return null;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.result ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function confirmWallet(address) {
+  const result = await helius("getBalance", [address]);
+  if (!result || typeof result.value !== "number") return null;
+  return { sol: result.value / 1_000_000_000, slot: result.context && result.context.slot };
+}
+
 function playedOf(player) {
   return (player.w || 0) + (player.l || 0) + (player.d || 0);
 }
@@ -90,6 +118,14 @@ function mergeBoards(base, extra) {
     return true;
   }).slice(0, 40);
   board.signins = [...(incoming.signins || []), ...(board.signins || [])].slice(0, 200);
+  const payouts = [...(incoming.payouts || []), ...(board.payouts || [])];
+  const paid = new Set();
+  board.payouts = payouts.filter((row) => {
+    const id = (row.wallet || "") + "|" + (row.gamePath || "") + "|" + (row.amount || "") + "|" + (row.at || "");
+    if (paid.has(id)) return false;
+    paid.add(id);
+    return true;
+  }).slice(0, 50);
   return board;
 }
 const AI_RATING = 1200;
@@ -151,11 +187,26 @@ export function ladderStandings() {
   const players = Object.values(board.players)
     .map((p) => publicPlayer(p))
     .sort((a, b) => b.cards - a.cards || b.streak - a.streak || b.rating - a.rating || a.name.localeCompare(b.name));
-  return { players, recent: board.recent.slice(0, 12) };
+  return { players, recent: board.recent.slice(0, 12), payouts: (board.payouts || []).slice(0, 12) };
 }
 
 export function syncBoard(payload) {
-  const incoming = { players: {}, recent: [], signins: [] };
+  const payouts = Array.isArray(payload && payload.payouts) ? payload.payouts : [];
+  const incoming = {
+    players: {},
+    recent: [],
+    signins: [],
+    payouts: payouts.slice(0, 50).map((row) => ({
+      name: cleanName(row && row.name),
+      wallet: cleanWallet(row && row.wallet),
+      mode: row && (row.mode === "online" || row.mode === "draft" || row.mode === "ai") ? row.mode : "ai",
+      amount: Math.max(0, Number(row && row.amount) || 0),
+      streak: Math.max(0, Number(row && row.streak) || 0),
+      balance: Math.max(0, Number(row && row.balance) || 0),
+      gamePath: String((row && row.gamePath) || "").slice(0, 180),
+      at: Number(row && row.at) || Date.now(),
+    })).filter((row) => row.wallet && row.amount > 0),
+  };
   const players = payload && payload.players && typeof payload.players === "object" ? payload.players : {};
   for (const player of Object.values(players)) {
     const address = cleanWallet(player && player.wallet);
@@ -235,6 +286,18 @@ export function recordLadderResult({ name, result, gamePath, mode, wallet }) {
     row.streak += 1;
     awarded = CARD_PAY[table] * row.streak;
     row.cards += awarded;
+    board.payouts = Array.isArray(board.payouts) ? board.payouts : [];
+    board.payouts.unshift({
+      name: row.name,
+      wallet: address,
+      mode: table,
+      amount: awarded,
+      streak: row.streak,
+      balance: row.cards,
+      gamePath: path,
+      at: Date.now(),
+    });
+    board.payouts = board.payouts.slice(0, 50);
   } else {
     row.streak = 0;
   }
@@ -329,10 +392,11 @@ export const LADDER_SCRIPT = String.raw`
   function ledger() {
     try {
       const raw = JSON.parse(localStorage.getItem("mc-ledger") || "null");
-      if (!raw || !Array.isArray(raw.players)) return { players: [], recent: [] };
+      if (!raw || !Array.isArray(raw.players)) return { players: [], recent: [], payouts: [] };
+      if (!Array.isArray(raw.payouts)) raw.payouts = [];
       return raw;
     } catch {
-      return { players: [], recent: [] };
+      return { players: [], recent: [], payouts: [] };
     }
   }
   function remember(data) {
@@ -349,7 +413,11 @@ export const LADDER_SCRIPT = String.raw`
       const nextPlayed = (player.w || 0) + (player.l || 0) + (player.d || 0);
       byWallet.set(player.wallet, nextPlayed >= prevPlayed ? { ...prev, ...player } : { ...player, ...prev });
     }
-    const next = { players: [...byWallet.values()], recent: (data && data.recent) || prior.recent || [] };
+    const next = {
+      players: [...byWallet.values()],
+      recent: (data && data.recent) || prior.recent || [],
+      payouts: [...((data && data.payouts) || []), ...(prior.payouts || [])].slice(0, 50),
+    };
     localStorage.setItem("mc-ledger", JSON.stringify(next));
     return next;
   }
@@ -408,7 +476,8 @@ export const LADDER_SCRIPT = String.raw`
       '<p style="margin:8px 0 6px;color:#a8a29e">Sign in with a username and wallet. Consecutive wins pay $CARDS. A loss or a draw resets the streak.</p>' +
       '<p style="margin:0 0 4px;color:#d6d3d1;font-size:12px">Play vs AI <b style="color:#efe8dc">5</b> · Draft <b style="color:#efe8dc">15</b> · Play Online <b style="color:#ff2bd6">40</b> per win, times the streak.</p>' +
       account +
-      '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="color:#78716c;font-size:11px;letter-spacing:.08em;text-transform:uppercase"><th></th><th style="text-align:left">Seat</th><th style="text-align:right">Streak</th><th style="text-align:right">$CARDS</th><th style="text-align:right">W-L-D</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="color:#78716c;font-size:11px;letter-spacing:.08em;text-transform:uppercase"><th></th><th style="text-align:left">Seat</th><th style="text-align:right">Streak</th><th style="text-align:right">$CARDS</th><th style="text-align:right">W-L-D</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      payoutLines(data);
     const form = panel.querySelector("#mc-login");
     if (form) form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -447,10 +516,43 @@ export const LADDER_SCRIPT = String.raw`
     const synced = await fetch("/__ladder/sync", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ players }),
+      body: JSON.stringify({ players, payouts: merged.payouts || [] }),
     });
     const next = await synced.json();
     if (next && next.ok) render(remember(next));
+  }
+
+  function modeLabel(mode) {
+    if (mode === "online") return "Play Online";
+    if (mode === "draft") return "Draft";
+    return "Play vs AI";
+  }
+  function payoutLines(data) {
+    const lines = (data.payouts || []).slice(0, 6).map((row) =>
+      '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid rgba(255,255,255,.06)"><span>' + esc(row.name) + ' · ' + esc(modeLabel(row.mode)) + '</span><span style="color:#3dff9a">+' + (row.amount || 0) + '</span></div>'
+    ).join("");
+    if (!lines) return "";
+    return '<div style="margin-top:14px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#2de2ff">Payouts</div>' + lines;
+  }
+  function payoutMachine(data) {
+    const old = document.getElementById("mc-payout");
+    if (old) old.remove();
+    const who = data.you || {};
+    const veil = document.createElement("div");
+    veil.id = "mc-payout";
+    veil.style.cssText = "position:fixed;inset:0;z-index:180;display:grid;place-items:center;background:rgba(0,0,0,.66);";
+    veil.innerHTML =
+      '<div style="width:min(380px,calc(100vw - 32px));background:#070814;border:1px solid rgba(45,226,255,.6);border-radius:18px;padding:22px 20px 16px;text-align:center;box-shadow:0 0 42px rgba(45,226,255,.28);">' +
+      '<div style="letter-spacing:.22em;font-size:11px;color:#2de2ff">PAYOUT MACHINE</div>' +
+      '<div style="margin-top:8px;font-family:Cinzel,Palatino,serif;font-size:48px;font-weight:900;line-height:1;background:linear-gradient(90deg,#3dff9a,#2de2ff 45%,#ff2bd6);-webkit-background-clip:text;background-clip:text;color:transparent;">+' + data.awarded + '</div>' +
+      '<div style="margin-top:4px;letter-spacing:.18em;color:#3dff9a">$CARDS</div>' +
+      '<p style="margin:14px 0 0;color:#efe8dc">' + esc(modeLabel(data.mode)) + ' · streak ' + (who.streak || 0) + '</p>' +
+      '<p style="margin:6px 0 0;color:#a8a29e">Paid to ' + esc(who.name || "") + '<br>' + esc(shortWallet(who.wallet)) + '</p>' +
+      (data.chain ? '<p style="margin:8px 0 0;color:#78716c">Wallet confirmed on Solana · ' + Number(data.chain.sol).toFixed(4) + ' SOL</p>' : '<p style="margin:8px 0 0;color:#78716c">Balance ' + (who.cards || 0) + ' $CARDS</p>') +
+      '<button id="mc-collect" type="button" style="margin-top:16px;cursor:pointer;width:100%;border:0;border-radius:999px;padding:11px;background:#2de2ff;color:#070814;font-weight:800;letter-spacing:.14em">COLLECT</button>' +
+      '</div>';
+    document.body.appendChild(veil);
+    veil.querySelector("#mc-collect").onclick = () => veil.remove();
   }
 
   function flash(text) {
@@ -479,7 +581,8 @@ export const LADDER_SCRIPT = String.raw`
       return;
     }
     render(remember(data));
-    if (!data.duplicate && typeof data.delta === "number") {
+    if (!data.duplicate && data.awarded > 0) payoutMachine(data);
+    else if (!data.duplicate && typeof data.delta === "number") {
       const sign = data.delta > 0 ? "+" + data.delta : String(data.delta);
       const word = result === "win" ? "Victory" : result === "loss" ? "Defeat" : "Draw";
       const purse = data.awarded ? " +" + data.awarded + " $CARDS. Streak " + data.you.streak + "." : " Streak reset.";
@@ -707,7 +810,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=11"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=13"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
@@ -771,7 +874,7 @@ self.addEventListener("activate",event=>{event.waitUntil((async()=>{const keys=a
   return { status: response.status, headers, body: buf };
 }
 
-export function ladderResponse(method, pathname, rawBody) {
+export async function ladderResponse(method, pathname, rawBody) {
   if (pathname === "/__ladder/fx.mp4" && (method === "GET" || method === "HEAD")) {
     try {
       const body = readFileSync(join(process.cwd(), "public/brand/fx.mp4"));
@@ -855,6 +958,10 @@ export function ladderResponse(method, pathname, rawBody) {
       payload = {};
     }
     const result = recordLadderResult(payload);
+    if (result.ok && result.awarded > 0 && result.you && result.you.wallet) {
+      const chain = await confirmWallet(result.you.wallet);
+      if (chain) result.chain = chain;
+    }
     return {
       status: result.ok ? 200 : 400,
       headers: { "content-type": "application/json; charset=utf-8" },
