@@ -6,6 +6,7 @@
  */
 import { LOGO_DATA_URL } from "./logo-data.mjs";
 import { FX_DATA_URL } from "./fx-data.mjs";
+import { INTRO_DATA_URL } from "./intro-data.mjs";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { injectGrokPwaHead } from "./grok-pwa-shared.mjs";
@@ -125,6 +126,32 @@ export const LADDER_SCRIPT = String.raw`
 (() => {
   if (window.__phaseLadder) return;
   window.__phaseLadder = true;
+  if (location.pathname === "/" || location.pathname === "") {
+  const intro = document.createElement("div");
+  intro.setAttribute("role", "presentation");
+  intro.style.cssText = "position:fixed;inset:0;z-index:400;background:#000;display:grid;place-items:center;cursor:pointer;transition:opacity .7s ease;";
+  const introVideo = document.createElement("video");
+  introVideo.src = "__MC_INTRO__";
+  introVideo.muted = true;
+  introVideo.defaultMuted = true;
+  introVideo.autoplay = true;
+  introVideo.playsInline = true;
+  introVideo.setAttribute("muted", "");
+  introVideo.setAttribute("playsinline", "");
+  introVideo.style.cssText = "width:min(520px,88vw);height:auto;max-height:86vh;object-fit:contain;";
+  intro.appendChild(introVideo);
+  document.body.appendChild(intro);
+  let introClosed = false;
+  const closeIntro = () => {
+    if (introClosed) return;
+    introClosed = true;
+    intro.style.opacity = "0";
+    setTimeout(() => intro.remove(), 700);
+  };
+  intro.addEventListener("click", closeIntro);
+  setTimeout(closeIntro, 5000);
+  introVideo.play().catch(() => {});
+  }
   const KEY = "phase-ladder-name";
   const seen = new Set();
   const root = document.createElement("div");
@@ -369,7 +396,7 @@ export const LADDER_SCRIPT = String.raw`
   brand();
   refresh().catch(() => render({ players: [] }));
 })();
-`.replace("__MC_LOGO__", LOGO_DATA_URL).replace("__MC_FX__", FX_DATA_URL);
+`.replace("__MC_LOGO__", LOGO_DATA_URL).replace("__MC_FX__", FX_DATA_URL).replace("__MC_INTRO__", INTRO_DATA_URL);
 
 function stripChallenges(html) {
   return html
