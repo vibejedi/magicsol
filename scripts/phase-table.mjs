@@ -126,6 +126,11 @@ export const LADDER_SCRIPT = String.raw`
 (() => {
   if (window.__phaseLadder) return;
   window.__phaseLadder = true;
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((reg) => reg.unregister().catch(() => {}));
+    }).catch(() => {});
+  }
   if (location.pathname === "/" || location.pathname === "") {
   const intro = document.createElement("div");
   intro.setAttribute("role", "presentation");
@@ -440,7 +445,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=7"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
@@ -462,6 +467,18 @@ function headerObject(headers) {
 
 export async function proxyPhase(url, host) {
   const pathOnly = url.split("?")[0];
+  if (pathOnly === "/sw.js") {
+    return {
+      status: 200,
+      headers: {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "no-cache",
+      },
+      body: `self.addEventListener("install",()=>self.skipWaiting());
+self.addEventListener("activate",event=>{event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.map(k=>caches.delete(k)));await self.registration.unregister();const all=await self.clients.matchAll({type:"window"});for(const client of all) client.navigate(client.url);})());});
+`,
+    };
+  }
   if (pathOnly === "/config.js") {
     return {
       status: 200,
