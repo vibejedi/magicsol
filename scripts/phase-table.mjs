@@ -225,7 +225,7 @@ export const LADDER_SCRIPT = String.raw`
   const seen = new Set();
   const root = document.createElement("div");
   root.id = "phase-ladder";
-  root.style.cssText = "position:fixed;z-index:200;right:12px;top:8px;font:13px/1.35 ui-sans-serif,system-ui,sans-serif;color:#e7e5e4;";
+  root.style.cssText = "position:fixed;z-index:30;right:16px;top:60px;font:13px/1.35 ui-sans-serif,system-ui,sans-serif;color:#e7e5e4;";
   document.body.appendChild(root);
 
   const chip = document.createElement("button");
@@ -239,6 +239,19 @@ export const LADDER_SCRIPT = String.raw`
   toast.hidden = true;
   toast.style.cssText = "position:absolute;right:0;top:46px;background:#111827;border:1px solid rgba(62,207,154,.5);color:#d1fae5;border-radius:12px;padding:10px 12px;width:min(280px,calc(100vw - 28px));";
   root.append(panel, toast, chip);
+  function placeChip() {
+    const mute = document.querySelector('button[aria-label="Mute"]');
+    if (!mute) return;
+    const box = mute.getBoundingClientRect();
+    const gap = 12;
+    const width = root.offsetWidth || 148;
+    let right = window.innerWidth - box.left + gap;
+    if (right + width > window.innerWidth - 12) right = 12;
+    root.style.top = Math.max(8, Math.round(box.top)) + "px";
+    root.style.right = Math.round(right) + "px";
+  }
+  placeChip();
+  window.addEventListener("resize", placeChip);
 
   let open = false;
   chip.onclick = () => { open = !open; panel.hidden = !open; if (open) toast.hidden = true; };
@@ -501,6 +514,7 @@ export const LADDER_SCRIPT = String.raw`
 
   function brand() {
     paint();
+    placeChip();
     socials();
     if (document.title === "phase.rs") document.title = "Magic Cards";
     document.querySelectorAll('link[rel*="icon"]').forEach((link) => {
@@ -583,7 +597,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=9"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=10"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
