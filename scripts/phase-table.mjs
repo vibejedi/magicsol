@@ -80,8 +80,10 @@ function mergeBoards(base, extra) {
       continue;
     }
     const incomingRicher = playedOf(player) > playedOf(current) || ((player.cards || 0) > (current.cards || 0) && playedOf(player) === playedOf(current));
-    board.players[key] = incomingRicher ? { ...current, ...player } : { ...player, ...current };
-    board.players[key].wallet = key;
+    const merged = incomingRicher ? { ...current, ...player } : { ...player, ...current };
+    merged.name = current.name;
+    merged.wallet = key;
+    board.players[key] = merged;
   }
   const recent = [...(incoming.recent || []), ...(board.recent || [])];
   const seen = new Set();
@@ -213,7 +215,11 @@ export function loginPlayer({ username, wallet }) {
     (p) => p.wallet !== address && String(p.name || "").toLowerCase() === playerName.toLowerCase(),
   );
   if (taken) return { ok: false, error: "That username is already taken." };
-  const row = board.players[address] ?? {
+  const existing = board.players[address];
+  if (existing && String(existing.name || "").toLowerCase() !== playerName.toLowerCase()) {
+    return { ok: false, error: "This wallet is already claimed." };
+  }
+  const row = existing ?? {
     name: playerName,
     wallet: address,
     rating: 1200,
@@ -224,7 +230,7 @@ export function loginPlayer({ username, wallet }) {
     cards: 0,
     joined: Date.now(),
   };
-  row.name = playerName;
+  if (!existing) row.name = playerName;
   row.wallet = address;
   row.lastSeen = Date.now();
   board.players[address] = row;
@@ -467,7 +473,7 @@ export const LADDER_SCRIPT = String.raw`
       : '<form id="mc-login" style="margin-top:10px"><label style="display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a8a29e">Username<input id="mc-user" maxlength="24" required style="' + field + '"></label><label style="display:block;margin-top:8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a8a29e">Wallet<input id="mc-wallet" required spellcheck="false" autocapitalize="off" placeholder="Solana address" style="' + field + '"></label><button type="submit" style="margin-top:10px;cursor:pointer;width:100%;border:0;border-radius:8px;padding:9px 10px;background:#2de2ff;color:#070814;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Sign in</button></form>';
     panel.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><strong style="letter-spacing:.14em;font-size:11px;text-transform:uppercase;color:#2de2ff">Leaderboard</strong><span style="color:#3dff9a;font-size:11px">$CARDS</span></div>' +
-      '<p style="margin:8px 0 6px;color:#a8a29e">Sign in with a username and wallet. Consecutive wins pay $CARDS. A loss or a draw resets the streak.</p>' +
+      '<p style="margin:8px 0 6px;color:#a8a29e">Sign in with a username and wallet. A wallet can only be claimed once. Consecutive wins pay $CARDS. A loss or a draw resets the streak.</p>' +
       '<p style="margin:0 0 4px;color:#d6d3d1;font-size:12px">Hold 200,000 $MAGIC to play. Wins pay $CARDS: AI <b style="color:#efe8dc">5</b> · Draft <b style="color:#efe8dc">15</b> · Online <b style="color:#ff2bd6">40</b>, times the streak.</p>' +
       account +
       '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="color:#78716c;font-size:11px;letter-spacing:.08em;text-transform:uppercase"><th></th><th style="text-align:left">Seat</th><th style="text-align:right">Streak</th><th style="text-align:right">$CARDS</th><th style="text-align:right">W-L-D</th></tr></thead><tbody>' + rows + '</tbody></table>' +
@@ -836,7 +842,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=14"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=15"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
