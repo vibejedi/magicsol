@@ -332,8 +332,33 @@ export const LADDER_SCRIPT = String.raw`
     return lockup;
   }
 
+  function socials() {
+    const xIcon = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.727-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>';
+    const pumpIcon = '<svg aria-hidden="true" viewBox="0 0 24 24" class="h-4 w-4 fill-current"><path d="M7 3.5h6.2a4.3 4.3 0 0 1 0 8.6H7V3.5Zm2 2v4.6h4.2a2.3 2.3 0 0 0 0-4.6H9Zm-1.2 9h10.4v2H7.8Zm.7 3.4h8.8v2H8.5Z"/></svg>';
+    const point = (a, href, label, icon) => {
+      if (a.dataset.mcLink === label && a.getAttribute("href") === href) return;
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.title = label;
+      a.setAttribute("aria-label", label);
+      a.innerHTML = icon;
+      a.dataset.mcLink = label;
+    };
+    document.querySelectorAll("a").forEach((a) => {
+      const href = a.getAttribute("href") || "";
+      if (href.includes("ko-fi.com") || href.includes("github.com/sponsors")) {
+        a.remove();
+        return;
+      }
+      if (href.includes("github.com/phase-rs")) point(a, "https://x.com/lordkahl", "X", xIcon);
+      else if (href.includes("discord.gg")) point(a, "https://pump.fun/coin/BWwZ6YWfhFKdfTvDHPX3gQck6WqFqDZesU3x41GAiutn", "Pump.fun", pumpIcon);
+    });
+  }
+
   function brand() {
     paint();
+    socials();
     if (document.title === "phase.rs") document.title = "Magic Cards";
     document.querySelectorAll('link[rel*="icon"]').forEach((link) => {
       const href = link.getAttribute("href") || "";
