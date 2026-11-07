@@ -76,6 +76,8 @@ function expected(a, b) {
   return 1 / (1 + 10 ** ((b - a) / 400));
 }
 
+const CARD_PAY = { ai: 5, draft: 15, online: 40 };
+
 export function ladderStandings() {
   const board = loadBoard();
   const players = Object.values(board.players)
@@ -85,15 +87,18 @@ export function ladderStandings() {
       w: p.w,
       l: p.l,
       d: p.d,
+      streak: p.streak || 0,
+      cards: p.cards || 0,
       played: p.w + p.l + p.d,
     }))
-    .sort((a, b) => b.rating - a.rating || b.w - a.w || a.name.localeCompare(b.name));
+    .sort((a, b) => b.cards - a.cards || b.streak - a.streak || b.rating - a.rating || a.name.localeCompare(b.name));
   return { players, recent: board.recent.slice(0, 12) };
 }
 
-export function recordLadderResult({ name, result, gamePath }) {
+export function recordLadderResult({ name, result, gamePath, mode }) {
   const outcome = result === "win" || result === "loss" || result === "draw" ? result : null;
   if (!outcome) return { ok: false, error: "bad result" };
+  const table = mode === "online" || mode === "draft" || mode === "ai" ? mode : "ai";
   const playerName = cleanName(name);
   const path = String(gamePath ?? "").slice(0, 180);
   const board = loadBoard();
@@ -101,25 +106,38 @@ export function recordLadderResult({ name, result, gamePath }) {
     return { ok: true, duplicate: true, ...ladderStandings(), you: board.players[playerName.toLowerCase()] };
   }
   const key = playerName.toLowerCase();
-  const row = board.players[key] ?? { name: playerName, rating: 1200, w: 0, l: 0, d: 0 };
+  const row = board.players[key] ?? { name: playerName, rating: 1200, w: 0, l: 0, d: 0, streak: 0, cards: 0 };
   row.name = playerName;
+  row.streak = row.streak || 0;
+  row.cards = row.cards || 0;
   const before = row.rating;
   const score = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
   const delta = Math.round(K * (score - expected(before, AI_RATING)));
   row.rating = Math.max(100, before + delta);
   row[outcome === "win" ? "w" : outcome === "loss" ? "l" : "d"] += 1;
+  let awarded = 0;
+  if (outcome === "win") {
+    row.streak += 1;
+    awarded = CARD_PAY[table] * row.streak;
+    row.cards += awarded;
+  } else {
+    row.streak = 0;
+  }
   board.players[key] = row;
   board.recent.unshift({
     name: playerName,
     result: outcome,
     delta,
     rating: row.rating,
+    cards: awarded,
+    streak: row.streak,
+    mode: table,
     gamePath: path,
     at: Date.now(),
   });
   board.recent = board.recent.slice(0, 40);
   saveBoard(board);
-  return { ok: true, duplicate: false, delta, you: row, ...ladderStandings() };
+  return { ok: true, duplicate: false, delta, awarded, mode: table, you: row, ...ladderStandings() };
 }
 
 export const LADDER_SCRIPT = String.raw`
@@ -161,16 +179,16 @@ export const LADDER_SCRIPT = String.raw`
   const seen = new Set();
   const root = document.createElement("div");
   root.id = "phase-ladder";
-  root.style.cssText = "position:fixed;z-index:80;right:14px;top:12px;font:13px/1.35 ui-sans-serif,system-ui,sans-serif;color:#e7e5e4;";
+  root.style.cssText = "position:fixed;z-index:200;right:12px;top:8px;font:13px/1.35 ui-sans-serif,system-ui,sans-serif;color:#e7e5e4;";
   document.body.appendChild(root);
 
   const chip = document.createElement("button");
   chip.type = "button";
-  chip.textContent = "Ladder";
-  chip.style.cssText = "cursor:pointer;border:1px solid rgba(45,226,255,.55);background:#070814;color:#e8fbff;border-radius:999px;padding:8px 14px;letter-spacing:.08em;text-transform:uppercase;font-size:11px;box-shadow:0 0 18px rgba(45,226,255,.25);";
+  chip.textContent = "Leaderboard";
+  chip.style.cssText = "cursor:pointer;border:1px solid rgba(45,226,255,.7);background:#070814;color:#e8fbff;border-radius:999px;padding:8px 16px;letter-spacing:.12em;text-transform:uppercase;font-size:11px;font-weight:700;box-shadow:0 0 18px rgba(45,226,255,.35);";
   const panel = document.createElement("div");
   panel.hidden = true;
-  panel.style.cssText = "position:absolute;right:0;top:46px;width:min(340px,calc(100vw - 28px));max-height:min(70vh,520px);overflow:auto;background:#070814;border:1px solid rgba(255,43,214,.55);border-radius:14px;padding:14px 14px 12px;box-shadow:0 18px 50px rgba(0,0,0,.5),0 0 24px rgba(45,226,255,.12);";
+  panel.style.cssText = "position:absolute;right:0;top:44px;width:min(420px,calc(100vw - 28px));max-height:min(70vh,560px);overflow:auto;background:#070814;border:1px solid rgba(255,43,214,.55);border-radius:14px;padding:14px 14px 12px;box-shadow:0 18px 50px rgba(0,0,0,.5),0 0 24px rgba(45,226,255,.12);";
   const toast = document.createElement("div");
   toast.hidden = true;
   toast.style.cssText = "position:absolute;right:0;top:46px;background:#111827;border:1px solid rgba(62,207,154,.5);color:#d1fae5;border-radius:12px;padding:10px 12px;width:min(280px,calc(100vw - 28px));";
@@ -180,22 +198,37 @@ export const LADDER_SCRIPT = String.raw`
   chip.onclick = () => { open = !open; panel.hidden = !open; if (open) toast.hidden = true; };
   function name() { return (localStorage.getItem(KEY) || "You").slice(0, 24); }
   function setName(v) { localStorage.setItem(KEY, v.slice(0, 24)); }
+  function rememberMode(text) {
+    const t = String(text || "").toLowerCase();
+    const mode = t.includes("play online") ? "online" : t.includes("draft") ? "draft" : (t.includes("play vs ai") || t.includes("vs ai") || t.includes("solo")) ? "ai" : "";
+    if (mode) sessionStorage.setItem("mc-mode", mode);
+  }
+  document.addEventListener("click", (event) => {
+    const el = event.target && event.target.closest ? event.target.closest("a,button") : null;
+    if (el) rememberMode(el.innerText);
+  }, true);
+  function currentMode() {
+    const path = location.pathname;
+    if (path.startsWith("/draft")) return "draft";
+    if (/online|lobby|multiplayer/.test(path)) return "online";
+    return sessionStorage.getItem("mc-mode") || "ai";
+  }
 
   function render(data) {
     const you = name();
     const rows = (data.players || []).map((p, i) =>
-      '<tr><td style="padding:4px 6px 4px 0;color:#a8a29e">' + (i + 1) + '</td><td style="padding:4px 8px">' + p.name + (p.name.toLowerCase() === you.toLowerCase() ? ' <span style="color:#e39a45">you</span>' : '') + '</td><td style="text-align:right;font-variant-numeric:tabular-nums">' + p.rating + '</td><td style="text-align:right;color:#a8a29e;font-variant-numeric:tabular-nums">' + p.w + '-' + p.l + '-' + p.d + '</td></tr>'
-    ).join("") || '<tr><td colspan="4" style="color:#a8a29e;padding:8px 0">No finished games yet. Finish a match and it posts here.</td></tr>';
+      '<tr><td style="padding:4px 6px 4px 0;color:#a8a29e">' + (i + 1) + '</td><td style="padding:4px 8px 4px 0">' + p.name + (p.name.toLowerCase() === you.toLowerCase() ? ' <span style="color:#2de2ff">you</span>' : '') + '</td><td style="text-align:right;font-variant-numeric:tabular-nums">' + (p.streak || 0) + '</td><td style="text-align:right;color:#3dff9a;font-variant-numeric:tabular-nums">' + (p.cards || 0) + '</td><td style="text-align:right;color:#a8a29e;font-variant-numeric:tabular-nums">' + p.w + '-' + p.l + '-' + p.d + '</td></tr>'
+    ).join("") || '<tr><td colspan="5" style="color:#a8a29e;padding:8px 0">No finished games yet.</td></tr>';
     panel.innerHTML =
-      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><strong style="letter-spacing:.14em;font-size:11px;text-transform:uppercase;color:#2de2ff">Magic Cards</strong><span style="color:#a8a29e;font-size:11px">vs the table AI</span></div>' +
-      '<p style="margin:8px 0 10px;color:#a8a29e">Finish a game on the Magic Cards table and the result moves your rating.</p>' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><strong style="letter-spacing:.14em;font-size:11px;text-transform:uppercase;color:#2de2ff">Leaderboard</strong><span style="color:#3dff9a;font-size:11px">$CARDS</span></div>' +
+      '<p style="margin:8px 0 6px;color:#a8a29e">Consecutive wins pay $CARDS. A loss or a draw resets the streak. The longer the streak, the bigger the payout.</p>' +
+      '<p style="margin:0 0 10px;color:#d6d3d1;font-size:12px">Play vs AI <b style="color:#efe8dc">5</b> · Draft <b style="color:#efe8dc">15</b> · Play Online <b style="color:#ff2bd6">40</b> per win, times the streak.</p>' +
       '<label style="display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a8a29e">Name<input id="phase-ladder-name" maxlength="24" style="display:block;width:100%;margin-top:4px;box-sizing:border-box;background:#07080c;color:#efe8dc;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px"></label>' +
-      '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="color:#78716c;font-size:11px;letter-spacing:.08em;text-transform:uppercase"><th></th><th style="text-align:left">Seat</th><th style="text-align:right">Rating</th><th style="text-align:right">W-L-D</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="color:#78716c;font-size:11px;letter-spacing:.08em;text-transform:uppercase"><th></th><th style="text-align:left">Seat</th><th style="text-align:right">Streak</th><th style="text-align:right">$CARDS</th><th style="text-align:right">W-L-D</th></tr></thead><tbody>' + rows + '</tbody></table>';
     const input = panel.querySelector("#phase-ladder-name");
     input.value = you;
     input.addEventListener("change", () => { setName(input.value.trim() || "You"); render(data); });
-    const mine = (data.players || []).find((p) => p.name.toLowerCase() === you.toLowerCase());
-    chip.textContent = mine ? "Ladder " + mine.rating : "Ladder";
+    chip.textContent = "Leaderboard";
   }
 
   async function refresh() {
@@ -215,14 +248,15 @@ export const LADDER_SCRIPT = String.raw`
     const res = await fetch("/__ladder/result", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: name(), result, gamePath: location.pathname }),
+      body: JSON.stringify({ name: name(), result, gamePath: location.pathname, mode: currentMode() }),
     });
     const data = await res.json();
     render(data);
     if (!data.duplicate && typeof data.delta === "number") {
       const sign = data.delta > 0 ? "+" + data.delta : String(data.delta);
       const word = result === "win" ? "Victory" : result === "loss" ? "Defeat" : "Draw";
-      flash(word + " posted. Rating " + data.you.rating + " (" + sign + ").");
+      const purse = data.awarded ? " +" + data.awarded + " $CARDS. Streak " + data.you.streak + "." : " Streak reset.";
+      flash(word + " posted. Rating " + data.you.rating + " (" + sign + ")." + purse);
     }
   }
 
@@ -445,7 +479,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=7"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=8"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
