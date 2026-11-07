@@ -14,7 +14,84 @@ import { injectGrokPwaHead } from "./grok-pwa-shared.mjs";
 export const PHASE_UPSTREAM = "https://preview.phase-rs.dev";
 /** Where the table opens 1v1. Override with PHASE_LOBBY_URL. Must be a wss:// URL the browser can reach. */
 export const PHASE_LOBBY_URL = process.env.PHASE_LOBBY_URL || "wss://play.magiccards.io/ws";
-const LADDER_PATH = join(process.cwd(), "data", "phase-ladder.json");
+const LADDER_PATHS = [
+  join(process.cwd(), "data", "phase-ladder.json"),
+  "/tmp/phase-ladder.json",
+];
+
+let memoryBoard = null;
+
+function emptyBoard() {
+  return { players: {}, recent: [], signins: [] };
+}
+
+function readBoardFile() {
+  for (const path of LADDER_PATHS) {
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8"));
+      if (raw && typeof raw === "object" && raw.players && typeof raw.players === "object") {
+        if (!Array.isArray(raw.recent)) raw.recent = [];
+        if (!Array.isArray(raw.signins)) raw.signins = [];
+        return raw;
+      }
+    } catch {
+      // Try the next copy.
+    }
+  }
+  return null;
+}
+
+function loadBoard() {
+  if (memoryBoard) return memoryBoard;
+  memoryBoard = readBoardFile() || emptyBoard();
+  for (const [key, player] of Object.entries(memoryBoard.players)) {
+    if (player && (player.name === "SaveA" || player.name === "SaveB")) delete memoryBoard.players[key];
+  }
+  return memoryBoard;
+}
+
+function saveBoard(board) {
+  memoryBoard = board;
+  const body = JSON.stringify(board);
+  for (const path of LADDER_PATHS) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, body);
+    } catch {
+      // One of the copies may be on a read-only disk. The other still counts.
+    }
+  }
+}
+
+function playedOf(player) {
+  return (player.w || 0) + (player.l || 0) + (player.d || 0);
+}
+
+function mergeBoards(base, extra) {
+  const board = base && base.players ? base : emptyBoard();
+  const incoming = extra && extra.players ? extra : emptyBoard();
+  for (const [key, player] of Object.entries(incoming.players)) {
+    if (!player || !player.wallet) continue;
+    const current = board.players[key];
+    if (!current) {
+      board.players[key] = player;
+      continue;
+    }
+    const incomingRicher = playedOf(player) > playedOf(current) || ((player.cards || 0) > (current.cards || 0) && playedOf(player) === playedOf(current));
+    board.players[key] = incomingRicher ? { ...current, ...player } : { ...player, ...current };
+    board.players[key].wallet = key;
+  }
+  const recent = [...(incoming.recent || []), ...(board.recent || [])];
+  const seen = new Set();
+  board.recent = recent.filter((row) => {
+    const id = (row.wallet || "") + "|" + (row.gamePath || "") + "|" + (row.at || "");
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }).slice(0, 40);
+  board.signins = [...(incoming.signins || []), ...(board.signins || [])].slice(0, 200);
+  return board;
+}
 const AI_RATING = 1200;
 const K = 32;
 
@@ -32,36 +109,6 @@ const SKIP_PREFIXES = [
 export function shouldProxyPhase(pathname) {
   if (!pathname || pathname === "") return false;
   return !SKIP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p));
-}
-
-function emptyBoard() {
-  return { players: {}, recent: [] };
-}
-
-let memoryBoard = null;
-
-function loadBoard() {
-  if (memoryBoard) return memoryBoard;
-  try {
-    const raw = JSON.parse(readFileSync(LADDER_PATH, "utf8"));
-    if (!raw || typeof raw !== "object" || typeof raw.players !== "object") return emptyBoard();
-    if (!Array.isArray(raw.recent)) raw.recent = [];
-    memoryBoard = raw;
-    return raw;
-  } catch {
-    memoryBoard = emptyBoard();
-    return memoryBoard;
-  }
-}
-
-function saveBoard(board) {
-  memoryBoard = board;
-  try {
-    mkdirSync(dirname(LADDER_PATH), { recursive: true });
-    writeFileSync(LADDER_PATH, JSON.stringify(board));
-  } catch {
-    // Preview disk can be read-only after deploy; the in-memory board still stands.
-  }
 }
 
 function cleanName(value) {
@@ -105,6 +152,30 @@ export function ladderStandings() {
     .map((p) => publicPlayer(p))
     .sort((a, b) => b.cards - a.cards || b.streak - a.streak || b.rating - a.rating || a.name.localeCompare(b.name));
   return { players, recent: board.recent.slice(0, 12) };
+}
+
+export function syncBoard(payload) {
+  const incoming = { players: {}, recent: [], signins: [] };
+  const players = payload && payload.players && typeof payload.players === "object" ? payload.players : {};
+  for (const player of Object.values(players)) {
+    const address = cleanWallet(player && player.wallet);
+    if (!address) continue;
+    incoming.players[address] = {
+      name: cleanName(player.name),
+      wallet: address,
+      rating: Number(player.rating) || 1200,
+      w: Math.max(0, Number(player.w) || 0),
+      l: Math.max(0, Number(player.l) || 0),
+      d: Math.max(0, Number(player.d) || 0),
+      streak: Math.max(0, Number(player.streak) || 0),
+      cards: Math.max(0, Number(player.cards) || 0),
+      joined: player.joined || null,
+      lastSeen: player.lastSeen || null,
+    };
+  }
+  const board = mergeBoards(loadBoard(), incoming);
+  saveBoard(board);
+  return { ok: true, ...ladderStandings() };
 }
 
 export function loginPlayer({ username, wallet }) {
@@ -255,6 +326,33 @@ export const LADDER_SCRIPT = String.raw`
 
   let open = false;
   chip.onclick = () => { open = !open; panel.hidden = !open; if (open) toast.hidden = true; };
+  function ledger() {
+    try {
+      const raw = JSON.parse(localStorage.getItem("mc-ledger") || "null");
+      if (!raw || !Array.isArray(raw.players)) return { players: [], recent: [] };
+      return raw;
+    } catch {
+      return { players: [], recent: [] };
+    }
+  }
+  function remember(data) {
+    const prior = ledger();
+    const byWallet = new Map();
+    for (const player of [...prior.players, ...((data && data.players) || [])]) {
+      if (!player || !player.wallet) continue;
+      const prev = byWallet.get(player.wallet);
+      if (!prev) {
+        byWallet.set(player.wallet, player);
+        continue;
+      }
+      const prevPlayed = (prev.w || 0) + (prev.l || 0) + (prev.d || 0);
+      const nextPlayed = (player.w || 0) + (player.l || 0) + (player.d || 0);
+      byWallet.set(player.wallet, nextPlayed >= prevPlayed ? { ...prev, ...player } : { ...player, ...prev });
+    }
+    const next = { players: [...byWallet.values()], recent: (data && data.recent) || prior.recent || [] };
+    localStorage.setItem("mc-ledger", JSON.stringify(next));
+    return next;
+  }
   function seat() {
     try {
       const raw = JSON.parse(localStorage.getItem(SEAT) || "null");
@@ -317,7 +415,7 @@ export const LADDER_SCRIPT = String.raw`
       signIn(form.querySelector("#mc-user").value, form.querySelector("#mc-wallet").value);
     });
     const logout = panel.querySelector("#mc-logout");
-    if (logout) logout.addEventListener("click", () => { setSeat(null); render(data); });
+    if (logout) logout.addEventListener("click", () => { setSeat(null); render(ledger()); });
     chip.textContent = "Leaderboard";
   }
 
@@ -333,14 +431,26 @@ export const LADDER_SCRIPT = String.raw`
       return;
     }
     setSeat(data.you);
-    render(data);
+    render(remember(data));
     flash("Signed in as " + data.you.name + ".");
   }
 
   async function refresh() {
     const res = await fetch("/__ladder/board");
     const data = await res.json();
-    render(data);
+    const merged = remember(data);
+    render(merged);
+    const serverCount = (data.players || []).length;
+    if (merged.players.length <= serverCount) return;
+    const players = {};
+    for (const player of merged.players) players[player.wallet] = player;
+    const synced = await fetch("/__ladder/sync", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ players }),
+    });
+    const next = await synced.json();
+    if (next && next.ok) render(remember(next));
   }
 
   function flash(text) {
@@ -368,7 +478,7 @@ export const LADDER_SCRIPT = String.raw`
       flash(data.error || "Could not post the result.");
       return;
     }
-    render(data);
+    render(remember(data));
     if (!data.duplicate && typeof data.delta === "number") {
       const sign = data.delta > 0 ? "+" + data.delta : String(data.delta);
       const word = result === "win" ? "Victory" : result === "loss" ? "Defeat" : "Draw";
@@ -597,7 +707,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=10"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=11"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
@@ -700,6 +810,20 @@ export function ladderResponse(method, pathname, rawBody) {
         "cache-control": "no-cache",
       },
       body: LADDER_SCRIPT,
+    };
+  }
+  if (pathname === "/__ladder/sync" && method === "POST") {
+    let payload = {};
+    try {
+      payload = JSON.parse(rawBody || "{}");
+    } catch {
+      payload = {};
+    }
+    const result = syncBoard(payload);
+    return {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify(result),
     };
   }
   if (pathname === "/__ladder/login" && method === "POST") {
