@@ -23,12 +23,13 @@ function fileConfig() {
 
 export function payoutConfig() {
   const file = fileConfig();
+  const env = process.env;
   return {
-    rpc: String(process.env.HELIUS_RPC_URL || file.rpc || "").trim(),
-    secret: String(process.env.PAYOUT_SECRET_KEY || file.secret || "").trim(),
-    cardsMint: String(process.env.CARDS_MINT || file.cardsMint || CARDS_MINT).trim(),
-    magicMint: String(process.env.MAGIC_MINT || file.magicMint || MAGIC_MINT).trim(),
-    magicRequired: Number(process.env.MAGIC_REQUIRED || file.magicRequired || MAGIC_REQUIRED),
+    rpc: String(env["HELIUS_RPC_URL"] || file.rpc || "").trim(),
+    secret: String(env["PAYOUT_SECRET_KEY"] || file.secret || "").trim(),
+    cardsMint: String(env["CARDS_MINT"] || file.cardsMint || CARDS_MINT).trim(),
+    magicMint: String(env["MAGIC_MINT"] || file.magicMint || MAGIC_MINT).trim(),
+    magicRequired: Number(env["MAGIC_REQUIRED"] || file.magicRequired || MAGIC_REQUIRED),
   };
 }
 
