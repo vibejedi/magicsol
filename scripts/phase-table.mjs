@@ -72,6 +72,27 @@ function cleanName(value) {
   return name || "You";
 }
 
+function cleanWallet(value) {
+  const wallet = String(value ?? "").trim();
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) return "";
+  return wallet;
+}
+
+function publicPlayer(p) {
+  return {
+    name: p.name,
+    wallet: p.wallet || "",
+    rating: p.rating,
+    w: p.w,
+    l: p.l,
+    d: p.d,
+    streak: p.streak || 0,
+    cards: p.cards || 0,
+    played: p.w + p.l + p.d,
+    joined: p.joined || null,
+  };
+}
+
 function expected(a, b) {
   return 1 / (1 + 10 ** ((b - a) / 400));
 }
@@ -81,33 +102,56 @@ const CARD_PAY = { ai: 5, draft: 15, online: 40 };
 export function ladderStandings() {
   const board = loadBoard();
   const players = Object.values(board.players)
-    .map((p) => ({
-      name: p.name,
-      rating: p.rating,
-      w: p.w,
-      l: p.l,
-      d: p.d,
-      streak: p.streak || 0,
-      cards: p.cards || 0,
-      played: p.w + p.l + p.d,
-    }))
+    .map((p) => publicPlayer(p))
     .sort((a, b) => b.cards - a.cards || b.streak - a.streak || b.rating - a.rating || a.name.localeCompare(b.name));
   return { players, recent: board.recent.slice(0, 12) };
 }
 
-export function recordLadderResult({ name, result, gamePath, mode }) {
+export function loginPlayer({ username, wallet }) {
+  const address = cleanWallet(wallet);
+  if (!address) return { ok: false, error: "Enter a Solana wallet address." };
+  const playerName = cleanName(username);
+  if (!String(username ?? "").trim() || playerName === "You") return { ok: false, error: "Choose a username." };
+  const board = loadBoard();
+  const taken = Object.values(board.players).find(
+    (p) => p.wallet !== address && String(p.name || "").toLowerCase() === playerName.toLowerCase(),
+  );
+  if (taken) return { ok: false, error: "That username is already taken." };
+  const row = board.players[address] ?? {
+    name: playerName,
+    wallet: address,
+    rating: 1200,
+    w: 0,
+    l: 0,
+    d: 0,
+    streak: 0,
+    cards: 0,
+    joined: Date.now(),
+  };
+  row.name = playerName;
+  row.wallet = address;
+  row.lastSeen = Date.now();
+  board.players[address] = row;
+  board.signins = Array.isArray(board.signins) ? board.signins : [];
+  board.signins.unshift({ name: playerName, wallet: address, at: Date.now() });
+  board.signins = board.signins.slice(0, 200);
+  saveBoard(board);
+  return { ok: true, you: publicPlayer(row), ...ladderStandings() };
+}
+
+export function recordLadderResult({ name, result, gamePath, mode, wallet }) {
   const outcome = result === "win" || result === "loss" || result === "draw" ? result : null;
   if (!outcome) return { ok: false, error: "bad result" };
+  const address = cleanWallet(wallet);
+  if (!address) return { ok: false, error: "Sign in with your wallet first." };
   const table = mode === "online" || mode === "draft" || mode === "ai" ? mode : "ai";
-  const playerName = cleanName(name);
   const path = String(gamePath ?? "").slice(0, 180);
   const board = loadBoard();
-  if (path && board.recent.some((row) => row.gamePath === path)) {
-    return { ok: true, duplicate: true, ...ladderStandings(), you: board.players[playerName.toLowerCase()] };
+  const row = board.players[address];
+  if (!row) return { ok: false, error: "Sign in on the leaderboard first." };
+  if (path && board.recent.some((entry) => entry.gamePath === path && entry.wallet === address)) {
+    return { ok: true, duplicate: true, ...ladderStandings(), you: publicPlayer(row) };
   }
-  const key = playerName.toLowerCase();
-  const row = board.players[key] ?? { name: playerName, rating: 1200, w: 0, l: 0, d: 0, streak: 0, cards: 0 };
-  row.name = playerName;
   row.streak = row.streak || 0;
   row.cards = row.cards || 0;
   const before = row.rating;
@@ -123,9 +167,11 @@ export function recordLadderResult({ name, result, gamePath, mode }) {
   } else {
     row.streak = 0;
   }
-  board.players[key] = row;
+  row.lastSeen = Date.now();
+  board.players[address] = row;
   board.recent.unshift({
-    name: playerName,
+    name: row.name,
+    wallet: address,
     result: outcome,
     delta,
     rating: row.rating,
@@ -137,7 +183,7 @@ export function recordLadderResult({ name, result, gamePath, mode }) {
   });
   board.recent = board.recent.slice(0, 40);
   saveBoard(board);
-  return { ok: true, duplicate: false, delta, awarded, mode: table, you: row, ...ladderStandings() };
+  return { ok: true, duplicate: false, delta, awarded, mode: table, you: publicPlayer(row), ...ladderStandings() };
 }
 
 export const LADDER_SCRIPT = String.raw`
@@ -175,7 +221,7 @@ export const LADDER_SCRIPT = String.raw`
   setTimeout(closeIntro, 5000);
   introVideo.play().catch(() => {});
   }
-  const KEY = "phase-ladder-name";
+  const SEAT = "mc-seat";
   const seen = new Set();
   const root = document.createElement("div");
   root.id = "phase-ladder";
@@ -196,8 +242,31 @@ export const LADDER_SCRIPT = String.raw`
 
   let open = false;
   chip.onclick = () => { open = !open; panel.hidden = !open; if (open) toast.hidden = true; };
-  function name() { return (localStorage.getItem(KEY) || "You").slice(0, 24); }
-  function setName(v) { localStorage.setItem(KEY, v.slice(0, 24)); }
+  function seat() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SEAT) || "null");
+      if (!raw || !raw.wallet || !raw.name) return null;
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+  function setSeat(value) {
+    if (value) localStorage.setItem(SEAT, JSON.stringify({ name: value.name, wallet: value.wallet }));
+    else localStorage.removeItem(SEAT);
+  }
+  function shortWallet(wallet) {
+    const value = String(wallet || "");
+    return value.length < 10 ? value : value.slice(0, 4) + "…" + value.slice(-4);
+  }
+  function esc(value) {
+    return String(value).replace(/[&<>"]/g, (ch) => {
+      if (ch === "&") return "&" + "amp;";
+      if (ch === "<") return "&" + "lt;";
+      if (ch === ">") return "&" + "gt;";
+      return "&" + "quot;";
+    });
+  }
   function rememberMode(text) {
     const t = String(text || "").toLowerCase();
     const mode = t.includes("play online") ? "online" : t.includes("draft") ? "draft" : (t.includes("play vs ai") || t.includes("vs ai") || t.includes("solo")) ? "ai" : "";
@@ -215,20 +284,44 @@ export const LADDER_SCRIPT = String.raw`
   }
 
   function render(data) {
-    const you = name();
+    const who = seat();
     const rows = (data.players || []).map((p, i) =>
-      '<tr><td style="padding:4px 6px 4px 0;color:#a8a29e">' + (i + 1) + '</td><td style="padding:4px 8px 4px 0">' + p.name + (p.name.toLowerCase() === you.toLowerCase() ? ' <span style="color:#2de2ff">you</span>' : '') + '</td><td style="text-align:right;font-variant-numeric:tabular-nums">' + (p.streak || 0) + '</td><td style="text-align:right;color:#3dff9a;font-variant-numeric:tabular-nums">' + (p.cards || 0) + '</td><td style="text-align:right;color:#a8a29e;font-variant-numeric:tabular-nums">' + p.w + '-' + p.l + '-' + p.d + '</td></tr>'
-    ).join("") || '<tr><td colspan="5" style="color:#a8a29e;padding:8px 0">No finished games yet.</td></tr>';
+      '<tr><td style="padding:4px 6px 4px 0;color:#a8a29e">' + (i + 1) + '</td><td style="padding:4px 8px 4px 0">' + esc(p.name) + (who && p.wallet === who.wallet ? ' <span style="color:#2de2ff">you</span>' : '') + '<div style="color:#78716c;font-size:11px">' + esc(shortWallet(p.wallet)) + '</div></td><td style="text-align:right;font-variant-numeric:tabular-nums">' + (p.streak || 0) + '</td><td style="text-align:right;color:#3dff9a;font-variant-numeric:tabular-nums">' + (p.cards || 0) + '</td><td style="text-align:right;color:#a8a29e;font-variant-numeric:tabular-nums">' + p.w + '-' + p.l + '-' + p.d + '</td></tr>'
+    ).join("") || '<tr><td colspan="5" style="color:#a8a29e;padding:8px 0">No players yet. Sign in to take a seat.</td></tr>';
+    const field = 'display:block;width:100%;margin-top:4px;box-sizing:border-box;background:#07080c;color:#efe8dc;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px';
+    const account = who
+      ? '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:10px"><div><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a8a29e">Signed in</div><strong>' + esc(who.name) + '</strong><div style="color:#78716c;font-size:11px">' + esc(shortWallet(who.wallet)) + '</div></div><button id="mc-logout" type="button" style="cursor:pointer;background:transparent;color:#a8a29e;border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:6px 8px">Log out</button></div>'
+      : '<form id="mc-login" style="margin-top:10px"><label style="display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a8a29e">Username<input id="mc-user" maxlength="24" required style="' + field + '"></label><label style="display:block;margin-top:8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a8a29e">Wallet<input id="mc-wallet" required spellcheck="false" autocapitalize="off" placeholder="Solana address" style="' + field + '"></label><button type="submit" style="margin-top:10px;cursor:pointer;width:100%;border:0;border-radius:8px;padding:9px 10px;background:#2de2ff;color:#070814;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Sign in</button></form>';
     panel.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><strong style="letter-spacing:.14em;font-size:11px;text-transform:uppercase;color:#2de2ff">Leaderboard</strong><span style="color:#3dff9a;font-size:11px">$CARDS</span></div>' +
-      '<p style="margin:8px 0 6px;color:#a8a29e">Consecutive wins pay $CARDS. A loss or a draw resets the streak. The longer the streak, the bigger the payout.</p>' +
-      '<p style="margin:0 0 10px;color:#d6d3d1;font-size:12px">Play vs AI <b style="color:#efe8dc">5</b> · Draft <b style="color:#efe8dc">15</b> · Play Online <b style="color:#ff2bd6">40</b> per win, times the streak.</p>' +
-      '<label style="display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a8a29e">Name<input id="phase-ladder-name" maxlength="24" style="display:block;width:100%;margin-top:4px;box-sizing:border-box;background:#07080c;color:#efe8dc;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px"></label>' +
+      '<p style="margin:8px 0 6px;color:#a8a29e">Sign in with a username and wallet. Consecutive wins pay $CARDS. A loss or a draw resets the streak.</p>' +
+      '<p style="margin:0 0 4px;color:#d6d3d1;font-size:12px">Play vs AI <b style="color:#efe8dc">5</b> · Draft <b style="color:#efe8dc">15</b> · Play Online <b style="color:#ff2bd6">40</b> per win, times the streak.</p>' +
+      account +
       '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr style="color:#78716c;font-size:11px;letter-spacing:.08em;text-transform:uppercase"><th></th><th style="text-align:left">Seat</th><th style="text-align:right">Streak</th><th style="text-align:right">$CARDS</th><th style="text-align:right">W-L-D</th></tr></thead><tbody>' + rows + '</tbody></table>';
-    const input = panel.querySelector("#phase-ladder-name");
-    input.value = you;
-    input.addEventListener("change", () => { setName(input.value.trim() || "You"); render(data); });
+    const form = panel.querySelector("#mc-login");
+    if (form) form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      signIn(form.querySelector("#mc-user").value, form.querySelector("#mc-wallet").value);
+    });
+    const logout = panel.querySelector("#mc-logout");
+    if (logout) logout.addEventListener("click", () => { setSeat(null); render(data); });
     chip.textContent = "Leaderboard";
+  }
+
+  async function signIn(username, wallet) {
+    const res = await fetch("/__ladder/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username, wallet }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      flash(data.error || "Could not sign in.");
+      return;
+    }
+    setSeat(data.you);
+    render(data);
+    flash("Signed in as " + data.you.name + ".");
   }
 
   async function refresh() {
@@ -245,12 +338,23 @@ export const LADDER_SCRIPT = String.raw`
   }
 
   async function post(result) {
+    const who = seat();
+    if (!who) {
+      open = true;
+      panel.hidden = false;
+      flash("Sign in on the leaderboard first.");
+      return;
+    }
     const res = await fetch("/__ladder/result", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: name(), result, gamePath: location.pathname, mode: currentMode() }),
+      body: JSON.stringify({ wallet: who.wallet, result, gamePath: location.pathname, mode: currentMode() }),
     });
     const data = await res.json();
+    if (!data.ok) {
+      flash(data.error || "Could not post the result.");
+      return;
+    }
     render(data);
     if (!data.duplicate && typeof data.delta === "number") {
       const sign = data.delta > 0 ? "+" + data.delta : String(data.delta);
@@ -479,7 +583,7 @@ function injectLadder(html, host) {
   let next = stripChallenges(html);
   next = brandHtml(next);
   next = injectGrokPwaHead(next, { host, cwd: process.cwd() });
-  const tag = '<script src="/__ladder/ui.js?v=8"></script>';
+  const tag = '<script src="/__ladder/ui.js?v=9"></script>';
   if (!next.includes("/__ladder/ui.js")) {
     if (next.includes("</body>")) next = next.replace("</body>", tag + "</body>");
     else next += tag;
@@ -582,6 +686,20 @@ export function ladderResponse(method, pathname, rawBody) {
         "cache-control": "no-cache",
       },
       body: LADDER_SCRIPT,
+    };
+  }
+  if (pathname === "/__ladder/login" && method === "POST") {
+    let payload = {};
+    try {
+      payload = JSON.parse(rawBody || "{}");
+    } catch {
+      payload = {};
+    }
+    const result = loginPlayer(payload);
+    return {
+      status: result.ok ? 200 : 400,
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify(result),
     };
   }
   if (pathname === "/__ladder/board" && method === "GET") {
